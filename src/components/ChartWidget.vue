@@ -1,16 +1,12 @@
 <template>
-  <div>
-    <Bar
-      v-if="isChartDataValid"
-      :chart-data="props.chartData"
-      :chart-options="props.chartOptions"
-    />
-    <p v-else>Loading chart data...</p>
-  </div>
+  <Bar
+    v-if="chartData.labels && chartData.labels.length > 0"
+    :data="chartData"
+  />
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { ref, onMounted, computed } from "vue";
 import { Bar } from "vue-chartjs";
 import {
   Chart as ChartJS,
@@ -41,20 +37,4 @@ const props = defineProps({
     default: () => ({ responsive: true, maintainAspectRatio: false }),
   },
 });
-
-const isChartDataValid = computed(() => {
-  return (
-    props.chartData &&
-    Array.isArray(props.chartData.labels) &&
-    props.chartData.labels.length > 0 &&
-    Array.isArray(props.chartData.datasets) &&
-    props.chartData.datasets.length > 0
-  );
-});
 </script>
-
-<style scoped>
-div {
-  height: 300px;
-}
-</style>
