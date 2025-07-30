@@ -6,7 +6,6 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from "vue";
 import { Bar } from "vue-chartjs";
 import {
   Chart as ChartJS,
