@@ -1,82 +1,67 @@
-// tests/MapWidget.test.js
 import { mount } from "@vue/test-utils";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { nextTick } from "vue"; // <--- ADD THIS IMPORT
+import { nextTick } from "vue";
+import MapComponent from "../src/components/MapWidget.vue";
+import L from "leaflet";
 
-// --- Mocks defined directly in the test file ---
-
+// Stub env token for fetch
 vi.stubEnv("VITE_IPINFO_TOKEN", "test_token");
 
-// 2. Define Leaflet mock objects
+// Leaflet mocks
 const mockMap = {
   setView: vi.fn().mockReturnThis(),
   addLayer: vi.fn().mockReturnThis(),
   remove: vi.fn().mockReturnThis(),
   invalidateSize: vi.fn().mockReturnThis(),
 };
-
 const mockTileLayer = {
   addTo: vi.fn().mockReturnThis(),
 };
-
 const mockMarker = {
   addTo: vi.fn().mockReturnThis(),
   bindPopup: vi.fn().mockReturnThis(),
   openPopup: vi.fn().mockReturnThis(),
 };
 
-// 3. Mock the 'leaflet' module
-vi.mock("leaflet", () => {
-  const mockedL = {
+// Mock leaflet module
+vi.mock("leaflet", () => ({
+  default: {
     map: vi.fn(() => mockMap),
     tileLayer: vi.fn(() => mockTileLayer),
     marker: vi.fn(() => mockMarker),
-
     Icon: {
       Default: {
         imagePath: "",
         mergeOptions: vi.fn(),
         call: vi.fn(),
-        prototype: {
-          options: {},
-          _getIconUrl: vi.fn(() => ""),
-        },
+        prototype: { options: {}, _getIconUrl: vi.fn(() => "") },
       },
       Icon: vi.fn(() => ({ options: {}, _getIconUrl: vi.fn(() => "") })),
     },
     latLng: vi.fn((lat, lng) => ({ lat, lng })),
-  };
+  },
+}));
 
-  return {
-    default: mockedL,
-  };
-});
-
-// 4. Mock the global fetch function
+// Mock fetch globally
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-// --- Now import the component (after all global mocks are set up) ---
-import MapComponent from "../src/components/MapWidget.vue";
-import L from "leaflet";
-
-// --- Begin Tests ---
 describe("MapComponent", () => {
-  // Use fake timers to control asynchronous operations like setTimeout and Promises
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
     mockFetch.mockReset();
   });
-
   afterEach(() => {
-    vi.useRealTimers(); // Restore real timers after each test
+    vi.useRealTimers();
   });
 
-  // Helper to advance timers and flush Vue's nextTick
+  // Helper to flush timers and Vue updates
   async function advanceTimersAndNextTick() {
-    vi.runAllTimers(); // Run all pending timers (including promise resolutions)
-    await nextTick(); // Flush Vue's DOM updates (now 'nextTick' is defined)
+    vi.runAllTimers();
+    // Sometimes multiple ticks needed to fully flush async updates
+    await nextTick();
+    await nextTick();
   }
 
   it("renders the map container div", async () => {
@@ -86,14 +71,13 @@ describe("MapComponent", () => {
     });
 
     const wrapper = mount(MapComponent);
-    await advanceTimersAndNextTick(); // Advance timers and nextTick
+    await advanceTimersAndNextTick();
 
     expect(wrapper.find("#map").exists()).toBe(true);
     expect(L.map).toHaveBeenCalled();
   });
 
   it("initializes the Leaflet map with default view and tile layer", async () => {
-    // This test now explicitly provides location data that will trigger L.marker
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
@@ -106,7 +90,7 @@ describe("MapComponent", () => {
     });
 
     const wrapper = mount(MapComponent);
-    await advanceTimersAndNextTick(); // Advance timers and nextTick
+    await advanceTimersAndNextTick();
 
     expect(L.map).toHaveBeenCalledWith(wrapper.vm.$refs.mapContainer);
 
@@ -114,33 +98,29 @@ describe("MapComponent", () => {
     const tileLayerInstance = L.tileLayer.mock.results[0].value;
 
     expect(mapInstance.setView).toHaveBeenCalledWith([51.505, -0.09], 13);
-
     expect(L.tileLayer).toHaveBeenCalledWith(
       "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-      {
-        attribution: "&copy; OpenStreetMap contributors",
-      }
+      { attribution: "&copy; OpenStreetMap contributors" }
     );
     expect(tileLayerInstance.addTo).toHaveBeenCalledWith(mapInstance);
 
-    // With vi.runAllTimers(), L.marker should have been called if the fetch resolved.
     expect(L.marker).toHaveBeenCalled();
   });
 
   it("fetches location and updates map view and marker on success", async () => {
-    const mockLocationData = {
-      loc: "34.0522,-118.2437",
-      city: "Los Angeles",
-      region: "CA",
-      country: "US",
-    };
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: () => Promise.resolve(mockLocationData),
+      json: () =>
+        Promise.resolve({
+          loc: "34.0522,-118.2437",
+          city: "Los Angeles",
+          region: "CA",
+          country: "US",
+        }),
     });
 
     const wrapper = mount(MapComponent);
-    await advanceTimersAndNextTick(); // Advance timers and nextTick
+    await advanceTimersAndNextTick();
 
     expect(mockFetch).toHaveBeenCalledWith(
       "https://ipinfo.io/json?token=test_token"
@@ -156,21 +136,21 @@ describe("MapComponent", () => {
     expect(L.marker).toHaveBeenCalledWith([34.0522, -118.2437]);
     expect(markerInstance.addTo).toHaveBeenCalledWith(mapInstance);
     expect(markerInstance.bindPopup).toHaveBeenCalledWith(
-      `Your approximate location:<br>${mockLocationData.city}, ${mockLocationData.region}, ${mockLocationData.country}`
+      "Your approximate location:<br>Los Angeles, CA, US"
     );
     expect(markerInstance.openPopup).toHaveBeenCalled();
   });
 
   it("uses default location and marker when fetchLocation fails or returns no location", async () => {
-    // Scenario 1: Fetch fails
+    // Fetch failure scenario
     mockFetch.mockResolvedValueOnce({
       ok: false,
       status: 500,
-      json: () => Promise.resolve({}), // Ensure json is callable even on error
+      json: () => Promise.resolve({}),
     });
 
     let wrapper = mount(MapComponent);
-    await advanceTimersAndNextTick(); // Advance timers and nextTick
+    await advanceTimersAndNextTick();
 
     expect(L.map).toHaveBeenCalledTimes(1);
     const mapInstance = L.map.mock.results[0].value;
@@ -187,18 +167,16 @@ describe("MapComponent", () => {
     expect(markerInstance.openPopup).toHaveBeenCalled();
 
     wrapper.unmount();
-
     vi.clearAllMocks();
-    vi.stubEnv("VITE_IPINFO_TOKEN", "test_token");
 
-    // Scenario 2: Fetch returns no 'loc'
+    // Fetch returns no location scenario
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: () => Promise.resolve({ city: "Unknown" }), // No 'loc' field
+      json: () => Promise.resolve({ city: "Unknown" }),
     });
 
     wrapper = mount(MapComponent);
-    await advanceTimersAndNextTick(); // Advance timers and nextTick
+    await advanceTimersAndNextTick();
 
     expect(L.map).toHaveBeenCalledTimes(1);
     const newMapInstance = L.map.mock.results[0].value;
@@ -218,11 +196,12 @@ describe("MapComponent", () => {
   it("handles error in fetchLocation gracefully", async () => {
     mockFetch.mockRejectedValueOnce(new Error("Network error"));
 
-    const consoleErrorSpy = vi.spyOn(console, "error");
-    consoleErrorSpy.mockImplementation(() => {});
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
 
     const wrapper = mount(MapComponent);
-    await advanceTimersAndNextTick(); // Advance timers and nextTick
+    await advanceTimersAndNextTick();
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       "Error fetching IP info:",
