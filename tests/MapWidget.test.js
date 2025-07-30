@@ -1,65 +1,112 @@
 import { mount } from "@vue/test-utils";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import MapComponent from "../src/components/MapWidget.vue"; // Adjust path as needed
-import L from "leaflet"; // Import L for type checking, though it's mocked
+import { nextTick } from "vue"; // Import nextTick from 'vue'
 
-// Mock the global fetch function
+// --- Mocks defined directly in the test file ---
+
+// 1. Mock import.meta.env for VITE_IPINFO_TOKEN using vi.stubEnv
+// This is the most reliable way to mock environment variables in Vitest.
+// It should be called before the component that uses the env variable is imported.
+vi.stubEnv("VITE_IPINFO_TOKEN", "test_token");
+
+// 2. Define Leaflet mock objects (these remain the same)
+const mockMap = {
+  setView: vi.fn().mockReturnThis(),
+  addLayer: vi.fn().mockReturnThis(),
+  remove: vi.fn().mockReturnThis(),
+  invalidateSize: vi.fn().mockReturnThis(),
+};
+
+const mockTileLayer = {
+  addTo: vi.fn(() => mockMap), // addTo returns the map instance
+};
+
+const mockMarker = {
+  addTo: vi.fn(() => mockMap), // addTo returns the map instance
+  bindPopup: vi.fn().mockReturnThis(),
+  openPopup: vi.fn().mockReturnThis(),
+};
+
+// 3. FIX: Mock the 'leaflet' module to explicitly define L and its methods as spies.
+// The key is to return an object where the 'default' property is our mocked L object,
+// and that mocked L object contains our spies.
+vi.mock("leaflet", () => {
+  // Define the mocked L object directly.
+  // This ensures map, tileLayer, marker are ALWAYS vi.fn() instances.
+  const mockedL = {
+    map: vi.fn(() => mockMap),
+    tileLayer: vi.fn(() => mockTileLayer),
+    marker: vi.fn(() => mockMarker),
+
+    // Crucial for Leaflet's default marker icons in JSDOM:
+    Icon: {
+      Default: {
+        imagePath: "", // Prevent it from trying to load images
+        mergeOptions: vi.fn(), // If mergeOptions is called
+        call: vi.fn(), // If used as a constructor (e.g., new L.Icon.Default())
+        prototype: {
+          // Often needed if internal methods are called on instances
+          options: {},
+          _getIconUrl: vi.fn(() => ""),
+        },
+      },
+      // If L.Icon is used directly (e.g., `new L.Icon(...)`)
+      Icon: vi.fn(() => ({ options: {}, _getIconUrl: vi.fn(() => "") })),
+    },
+    // If your component explicitly uses L.latLng:
+    latLng: vi.fn((lat, lng) => ({ lat, lng })),
+
+    // Add other Leaflet top-level properties if your component uses them,
+    // otherwise, omitting them is fine if they are not directly accessed.
+    // E.g., L.Control, L.Util, etc.
+  };
+
+  // Return an object where `default` is our `mockedL` object.
+  // This correctly simulates `import L from 'leaflet';`
+  return {
+    default: mockedL,
+    // If Leaflet also had named exports that your component imports (e.g., `import { Map } from 'leaflet';`),
+    // you would also need to export them here, like `Map: mockedL.map` or `...mockedL` if all properties are named exports.
+    // For `import L from 'leaflet'`, `default` is the primary concern.
+  };
+});
+
+// 4. Mock the global fetch function
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
+// --- Now import the component (after all global mocks are set up) ---
+import MapComponent from "../src/components/MapWidget.vue";
+// We import L here, but it will be the mocked L object from vi.mock
+import L from "leaflet";
+
+// --- Begin Tests ---
 describe("MapComponent", () => {
   beforeEach(() => {
-    // Reset mocks before each test
-    vi.clearAllMocks(); // This clears all `vi.fn()` calls, including those on L.map, L.tileLayer, L.marker methods.
+    // Clear all mocks before each test
+    vi.clearAllMocks();
 
-    // If you need to specifically clear the mock call history for Leaflet methods,
-    // you should access the mock functions directly if they were defined globally
-    // or as part of the L object in your setup file.
-
-    // A better way to ensure Leaflet mocks are reset is to re-mock or clear the calls
-    // directly on the functions that are assigned to L in your vitest.setup.js.
-    // Given your setup, `vi.clearAllMocks()` should actually cover these.
-    // However, if you're seeing issues, ensure the mocked `L` object's methods are being reset.
-
-    // Based on your `vitest.setup.js`:
-    // L.map, L.tileLayer, L.marker are assigned vi.fn() directly.
-    // And mockMap, mockTileLayer, mockMarker methods are vi.fn().
-    // So, vi.clearAllMocks() should handle clearing calls on these.
-
-    // The error suggests that `L.map()` itself, when called to access its methods for clearing,
-    // might be encountering an issue with its internal Leaflet logic (even though mocked).
-    // The simplest and most robust fix is to rely on `vi.clearAllMocks()` and
-    // ensure your Leaflet mock setup correctly returns the same mock instances.
-
-    // Let's ensure the Leaflet mocks are reset by clearing the mock calls on the
-    // specific methods of the mocked objects.
-    // This assumes the `mockMap`, `mockTileLayer`, `mockMarker` instances are consistent.
-    // Your `vitest.setup.js` correctly defines them once.
-    // `vi.clearAllMocks()` *should* be sufficient if all mocks are `vi.fn()`.
-
-    // The core issue might be that `L.map()` when called in beforeEach *itself*
-    // is triggering the `_initContainer` logic inside the mocked Leaflet, which then
-    // expects a valid DOM element, even though it's mocked.
-    // To avoid this, we shouldn't call L.map() to clear its methods.
-    // Instead, we directly clear the mock of the `setView` function that `L.map()` returns.
-
-    // Corrected way to clear mock calls on the methods of the mocked Leaflet objects:
-    L.map.mock.results[0]?.value?.setView.mockClear(); // Access the returned mockMap instance's setView
-    L.tileLayer.mock.results[0]?.value?.addTo.mockClear(); // Access the returned mockTileLayer instance's addTo
-    L.marker.mock.results[0]?.value?.addTo.mockClear(); // Access the returned mockMarker instance's addTo
-    L.marker.mock.results[0]?.value?.bindPopup.mockClear();
-    L.marker.mock.results[0]?.value?.openPopup.mockClear();
-    // This is more robust as it clears the mock calls on the *actual* mock instances returned by L.map, etc.
-    // The `mock.results[0]?.value` accesses the first instance returned by the top-level mock function.
+    // Ensure mockFetch is reset for each test
+    mockFetch.mockReset(); // Use mockReset to clear mock implementation and call history
   });
 
-  it("renders the map container div", () => {
+  it("renders the map container div", async () => {
+    // Provide a default mock for fetch, as onMounted will call it
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ loc: "0,0" }), // Minimal valid response
+    });
+
     const wrapper = mount(MapComponent);
+    await nextTick(); // Wait for onMounted to complete
+
     expect(wrapper.find("#map").exists()).toBe(true);
+    // Optionally, you can assert that map initialization happened
+    expect(L.map).toHaveBeenCalled();
   });
 
   it("initializes the Leaflet map with default view and tile layer", async () => {
-    // Mock successful fetch for initial rendering, then verify default setup
+    // Mock successful fetch for initial rendering
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
@@ -72,25 +119,23 @@ describe("MapComponent", () => {
     });
 
     const wrapper = mount(MapComponent);
-    await vi.nextTick(); // Wait for onMounted to run
+    await nextTick();
 
-    // Check if L.map was called with the correct element
+    // Now L.map should unequivocally be a spy
     expect(L.map).toHaveBeenCalledWith(wrapper.vm.$refs.mapContainer);
 
-    // Check initial setView
-    // Access the mock instance returned by L.map
+    // L.map.mock.results[0].value should now be safely accessible
     const mapInstance = L.map.mock.results[0].value;
+    const tileLayerInstance = L.tileLayer.mock.results[0].value;
+
     expect(mapInstance.setView).toHaveBeenCalledWith([51.505, -0.09], 13);
 
-    // Check if tileLayer was created and added
     expect(L.tileLayer).toHaveBeenCalledWith(
       "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
       {
         attribution: "&copy; OpenStreetMap contributors",
       }
     );
-    // Access the mock instance returned by L.tileLayer
-    const tileLayerInstance = L.tileLayer.mock.results[0].value;
     expect(tileLayerInstance.addTo).toHaveBeenCalledWith(mapInstance);
   });
 
@@ -107,23 +152,20 @@ describe("MapComponent", () => {
     });
 
     const wrapper = mount(MapComponent);
-    await vi.nextTick(); // Wait for onMounted and fetchLocation to complete
+    await nextTick();
 
-    // Expect fetch to have been called
     expect(mockFetch).toHaveBeenCalledWith(
       "https://ipinfo.io/json?token=test_token"
     );
 
     const mapInstance = L.map.mock.results[0].value;
-    // Expect setView to be called with fetched coordinates
+    const markerInstance = L.marker.mock.results[0].value;
+
     expect(mapInstance.setView).toHaveBeenCalledWith([34.0522, -118.2437], 13);
 
-    const markerInstance = L.marker.mock.results[0].value;
-    // Expect marker to be added at fetched coordinates
     expect(L.marker).toHaveBeenCalledWith([34.0522, -118.2437]);
     expect(markerInstance.addTo).toHaveBeenCalledWith(mapInstance);
 
-    // Expect popup content
     expect(markerInstance.bindPopup).toHaveBeenCalledWith(
       `Your approximate location:<br>${mockLocationData.city}, ${mockLocationData.region}, ${mockLocationData.country}`
     );
@@ -138,14 +180,12 @@ describe("MapComponent", () => {
     });
 
     let wrapper = mount(MapComponent);
-    await vi.nextTick();
+    await nextTick();
 
     const mapInstance = L.map.mock.results[0].value;
     const markerInstance = L.marker.mock.results[0].value;
 
-    // Expect setView to remain at default (not called again with new coords)
-    expect(mapInstance.setView).toHaveBeenCalledWith([51.505, -0.09], 13); // Called initially
-    // Check that marker is at default location
+    expect(mapInstance.setView).toHaveBeenCalledWith([51.505, -0.09], 13);
     expect(L.marker).toHaveBeenCalledWith([51.505, -0.09]);
     expect(markerInstance.addTo).toHaveBeenCalledWith(mapInstance);
     expect(markerInstance.bindPopup).toHaveBeenCalledWith(
@@ -153,16 +193,12 @@ describe("MapComponent", () => {
     );
     expect(markerInstance.openPopup).toHaveBeenCalled();
 
-    wrapper.unmount(); // Clean up
+    wrapper.unmount();
 
-    // Scenario 2: Fetch succeeds but loc is missing
     vi.clearAllMocks(); // Clear mocks for the new test run
-    // Re-clear the specific mock methods using the correct access pattern
-    L.map.mock.results[0]?.value?.setView.mockClear();
-    L.tileLayer.mock.results[0]?.value?.addTo.mockClear();
-    L.marker.mock.results[0]?.value?.addTo.mockClear();
-    L.marker.mock.results[0]?.value?.bindPopup.mockClear();
-    L.marker.mock.results[0]?.value?.openPopup.mockClear();
+
+    // vi.stubEnv is global, no need to re-stub usually, but explicitly calling
+    // mockFetch.mockReset() above handles potential residual mock implementations.
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -170,15 +206,12 @@ describe("MapComponent", () => {
     });
 
     wrapper = mount(MapComponent);
-    await vi.nextTick();
+    await nextTick();
 
-    // Re-get the instance after remounting if necessary, or just use the cleared mocks
     const newMapInstance = L.map.mock.results[0].value;
     const newMarkerInstance = L.marker.mock.results[0].value;
 
-    // Expect setView to remain at default
     expect(newMapInstance.setView).toHaveBeenCalledWith([51.505, -0.09], 13);
-    // Check that marker is at default location
     expect(L.marker).toHaveBeenCalledWith([51.505, -0.09]);
     expect(newMarkerInstance.addTo).toHaveBeenCalledWith(newMapInstance);
     expect(newMarkerInstance.bindPopup).toHaveBeenCalledWith(
@@ -188,26 +221,28 @@ describe("MapComponent", () => {
   });
 
   it("handles error in fetchLocation gracefully", async () => {
-    // Mock a network error
     mockFetch.mockRejectedValueOnce(new Error("Network error"));
 
-    const wrapper = mount(MapComponent);
-    await vi.nextTick();
-
-    // Expect the console.error to have been called (optional, but good for debugging)
     const consoleErrorSpy = vi.spyOn(console, "error");
+    consoleErrorSpy.mockImplementation(() => {}); // Suppress actual console output
+
+    const wrapper = mount(MapComponent);
+    await nextTick();
+
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       "Error fetching IP info:",
       expect.any(Error)
     );
 
-    // Ensure default marker is still placed
+    const mapInstance = L.map.mock.results[0].value;
     const markerInstance = L.marker.mock.results[0].value;
+
     expect(L.marker).toHaveBeenCalledWith([51.505, -0.09]);
+    expect(markerInstance.addTo).toHaveBeenCalledWith(mapInstance);
     expect(markerInstance.bindPopup).toHaveBeenCalledWith(
       "Default location - unable to fetch your IP info."
     );
 
-    consoleErrorSpy.mockRestore(); // Clean up spy
+    consoleErrorSpy.mockRestore();
   });
 });
